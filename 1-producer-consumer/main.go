@@ -6,26 +6,37 @@
 // as the consumer can run concurrently
 //
 
+
+/*
+We can make both the producer and consumer concurrent
+Producer will send data to the channel and
+Consumer will process it on the other end of the channel.
+ */
 package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
-func producer(stream Stream) (tweets []*Tweet) {
+func producer(wg *sync.WaitGroup, ch chan<- *Tweet, stream Stream){
+	defer wg.Done()
+	wg.Add(1)
 	for {
 		tweet, err := stream.Next()
 		if err == ErrEOF {
-			return tweets
+			close(ch)
+			return
 		}
-
-		tweets = append(tweets, tweet)
+		ch <- tweet
 	}
 }
 
-func consumer(tweets []*Tweet) {
-	for _, t := range tweets {
+func consumer(wg *sync.WaitGroup, tweets <-chan *Tweet) {
+	wg.Add(1)
+	defer wg.Done()
+	for t := range tweets {
 		if t.IsTalkingAboutGo() {
 			fmt.Println(t.Username, "\ttweets about golang")
 		} else {
@@ -37,12 +48,27 @@ func consumer(tweets []*Tweet) {
 func main() {
 	start := time.Now()
 	stream := GetMockStream()
+	tweet := make(chan *Tweet)
+	var wg sync.WaitGroup
 
 	// Producer
-	tweets := producer(stream)
+	go producer(&wg, tweet, stream)
 
 	// Consumer
-	consumer(tweets)
 
+	select {
+	// If these is anything on the channel
+	// send it to the consumer
+	case <-tweet:
+		go consumer(&wg, tweet)
+
+	// time.After() returns a recevive only channel after the specified duration
+	// if there is anything on the channel returned by time.After() close
+	// the tweet channel and return
+	case <-time.After(time.Second*1):
+		close(tweet)
+		return
+	}
+	wg.Wait()
 	fmt.Printf("Process took %s\n", time.Since(start))
 }
