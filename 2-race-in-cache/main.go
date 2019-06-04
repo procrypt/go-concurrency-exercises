@@ -8,7 +8,10 @@
 
 package main
 
-import "container/list"
+import (
+	"container/list"
+	"sync"
+)
 
 // CacheSize determines how big the cache can grow
 const CacheSize = 100
@@ -21,37 +24,48 @@ type KeyStoreCacheLoader interface {
 
 // KeyStoreCache is a LRU cache for string key-value pairs
 type KeyStoreCache struct {
-	cache map[string]string
+	cache sync.Map
 	pages list.List
 	load  func(string) string
+	mutex sync.Mutex
 }
 
 // New creates a new KeyStoreCache
 func New(load KeyStoreCacheLoader) *KeyStoreCache {
 	return &KeyStoreCache{
 		load:  load.Load,
-		cache: make(map[string]string),
+		// Make cache a concurrent map with sync.Map
+		cache: sync.Map{},
 	}
+}
+
+func (k *KeyStoreCache) Len() int {
+	var length int
+	k.cache.Range(func(_,_ interface{}) bool {
+		length++
+		return true
+	})
+	return length
 }
 
 // Get gets the key from cache, loads it from the source if needed
 func (k *KeyStoreCache) Get(key string) string {
-	val, ok := k.cache[key]
+
+	val , ok := k.cache.LoadOrStore(key, k.load(key))
 
 	// Miss - load from database and save it in cache
 	if !ok {
-		val = k.load(key)
-		k.cache[key] = val
+		// Make Pushing pages to front in the cache atomic
+		k.mutex.Lock()
 		k.pages.PushFront(key)
-
+		k.mutex.Unlock()
 		// if cache is full remove the least used item
-		if len(k.cache) > CacheSize {
-			delete(k.cache, k.pages.Back().Value.(string))
+		if k.Len() > CacheSize {
+			k.cache.Delete(k.pages.Back().Value.(string))
 			k.pages.Remove(k.pages.Back())
 		}
 	}
-
-	return val
+	return val.(string)
 }
 
 // Loader implements KeyStoreLoader
