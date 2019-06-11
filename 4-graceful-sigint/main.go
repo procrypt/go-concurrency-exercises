@@ -13,9 +13,34 @@
 
 package main
 
+import (
+	"fmt"
+	"os"
+	"os/signal"
+)
+
 func main() {
+	signalStream := make(chan os.Signal)
+	signal.Notify(signalStream, os.Interrupt)
+
 	// Create a process
 	proc := MockProcess{}
+	count := 0
+	go func() {
+		for {
+			select {
+			case <-signalStream:
+				count++
+				if count == 2 {
+					fmt.Println("Forcefully Exiting")
+					os.Exit(1)
+				}
+				go func() {
+					proc.Stop()
+				}()
+			}
+		}
+	}()
 
 	// Run the process (blocking)
 	proc.Run()
